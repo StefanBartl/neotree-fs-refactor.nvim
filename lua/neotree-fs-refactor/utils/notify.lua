@@ -1,24 +1,29 @@
----@module 'neotree_fs_refactor.utils.notify'
+---@module 'neotree-fs-refactor.utils.notify'
 ---Notification helper that prefixes all messages with a fixed plugin tag
 
 local M = {}
 
+local notify, levels = vim.notify, vim.log.levels
+
 -- Constant prefix for all notifications
 local PREFIX = "[neotree-fs-refactor] "
 
----Notify with a fixed prefix, mirroring vim.notify behavior
+---Notify with a fixed prefix, mirroring notify behavior
 ---@param msg string Notification message
----@param level? integer Log level (vim.log.levels.*)
----@param opts? table Additional vim.notify options
+---@param level? integer Log level (levels.*)
+---@param opts? table Additional notify options
 function M.notify(msg, level, opts)
+  -- Ensure message is always a string
   if type(msg) ~= "string" then
     msg = tostring(msg)
   end
 
-  level = level or vim.log.levels.INFO
+  -- Default values, matching notify semantics
+  level = level or levels.INFO
   opts = opts or {}
 
-  vim.notify(PREFIX .. msg, level, opts)
+  -- Prepend prefix exactly once
+  notify(PREFIX .. msg, level, opts)
 end
 
 ---Shorthand helpers for common log levels
@@ -26,25 +31,25 @@ end
 ---@param msg string
 ---@param opts? table
 function M.info(msg, opts)
-  M.notify(PREFIX .. msg, vim.log.levels.INFO, opts)
+  M.notify(msg, levels.INFO, opts)
 end
 
 ---@param msg string
 ---@param opts? table
 function M.warn(msg, opts)
-  M.notify(PREFIX .. msg, vim.log.levels.WARN, opts)
+  M.notify(msg, levels.WARN, opts)
 end
 
 ---@param msg string
 ---@param opts? table
 function M.error(msg, opts)
-  M.notify(PREFIX .. msg, vim.log.levels.ERROR, opts)
+  M.notify(msg, levels.ERROR, opts)
 end
 
 ---@param msg string
 ---@param opts? table
 function M.debug(msg, opts)
-  M.notify(PREFIX .. msg, vim.log.levels.DEBUG, opts)
+  M.notify(msg, levels.DEBUG, opts)
 end
 
 return M

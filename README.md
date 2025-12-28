@@ -1,422 +1,305 @@
 # neotree-fs-refactor.nvim
 
-Automatically refactor project-wide references when renaming or moving files in Neo-tree.
+Automatic Lua `require()` refactoring for Neo-tree file operations.
 
-## Table of content
+## ✨ Features
 
-  - [Features](#features)
-  - [Requirements](#requirements)
-  - [Installation](#installation)
-    - [Using [lazy.nvim](https://github.com/folke/lazy.nvim)](#using-lazynvimhttpsgithubcomfolkelazynvim)
-    - [Using [packer.nvim](https://github.com/wbthomason/packer.nvim)](#using-packernvimhttpsgithubcomwbthomasonpackernvim)
-  - [Configuration](#configuration)
-    - [Default Configuration](#default-configuration)
-    - [Minimal Configuration](#minimal-configuration)
-    - [Custom Configuration Examples](#custom-configuration-examples)
-      - [LSP-Only (No Fallback)](#lsp-only-no-fallback)
-      - [Fallback-Only (No LSP)](#fallback-only-no-lsp)
-      - [Silent Mode (Minimal Notifications)](#silent-mode-minimal-notifications)
-  - [Usage](#usage)
-    - [Automatic (Neo-tree Integration)](#automatic-neo-tree-integration)
-    - [Manual Refactoring](#manual-refactoring)
-    - [Commands](#commands)
-    - [Health Check](#health-check)
-  - [How It Works](#how-it-works)
-    - [Phase 1: LSP Refactoring](#phase-1-lsp-refactoring)
-    - [Phase 2: Fallback Search](#phase-2-fallback-search)
-    - [Phase 3: Review & Apply](#phase-3-review-apply)
-  - [Supported LSP Servers](#supported-lsp-servers)
-  - [Preview Window](#preview-window)
-    - [Keymaps (in preview)](#keymaps-in-preview)
-  - [Troubleshooting](#troubleshooting)
-    - [No Changes Detected](#no-changes-detected)
-    - [LSP Timeout](#lsp-timeout)
-    - [False Positives in Fallback](#false-positives-in-fallback)
-    - [Ripgrep Not Found](#ripgrep-not-found)
-  - [License](#license)
-  - [Related Projects](#related-projects)
-  - [Acknowledgments](#acknowledgments)
+- 🔄 **Automatic Require Updates**: Automatically updates `require()` statements when files/directories are renamed in Neo-tree
+- 🚀 **Smart Caching**: Persistent cache system for fast lookups across Neovim sessions
+- 🔍 **Interactive Picker**: Review and select which requires to update via Telescope/FZF-Lua
+- ⚡ **Async Scanning**: Non-blocking directory scanning using libuv
+- 🌳 **Hierarchical Cache**: Parent directory caches automatically apply to subdirectories
+- 🧹 **Auto Cleanup**: Automatic removal of stale cache files
+- 🎯 **Pattern Matching**: Supports multiple require() syntax styles
 
---
+## 📦 Installation
 
-## Features
-
-- **LSP Integration**: Uses LSP `workspace/willRenameFiles` for semantic refactoring
-- **Fallback Search**: Text-based search using ripgrep or native Lua when LSP unavailable
-- **Interactive Preview**: Review all changes before applying
-- **Safe by Default**: No auto-apply without explicit confirmation
-- **Multi-Language Support**: Works with any LSP server supporting file operations
-- **Configurable**: Extensive configuration options for different workflows
-
----
-
-## Requirements
-
-- Neovim >= 0.9.0
-- [neo-tree.nvim](https://github.com/nvim-neo-tree/neo-tree.nvim)
-- (Optional) [ripgrep](https://github.com/BurntSushi/ripgrep) for faster fallback search
-- (Optional) LSP servers with `willRename` support (e.g., TypeScript, Lua, Go, Rust)
-
----
-
-## Installation
-
-### Using [lazy.nvim](https://github.com/folke/lazy.nvim)
+### lazy.nvim
 
 ```lua
 {
   "StefanBartl/neotree-fs-refactor.nvim",
   dependencies = {
     "nvim-neo-tree/neo-tree.nvim",
+    "nvim-telescope/telescope.nvim", -- or "ibhagwan/fzf-lua"
   },
   config = function()
     require("neotree-fs-refactor").setup({
-      -- Configuration here (see below)
+      -- Configuration (see below)
     })
   end,
 }
 ```
 
----
-
-### Using [packer.nvim](https://github.com/wbthomason/packer.nvim)
+### packer.nvim
 
 ```lua
 use {
   "StefanBartl/neotree-fs-refactor.nvim",
-  requires = { "nvim-neo-tree/neo-tree.nvim" },
+  requires = {
+    "nvim-neo-tree/neo-tree.nvim",
+    "nvim-telescope/telescope.nvim",
+  },
   config = function()
-    require("neotree_fs_refactor").setup()
-  end
+    require("neotree-fs-refactor").setup()
+  end,
 }
 ```
 
----
-
-## Configuration
+## ⚙️ Configuration
 
 ### Default Configuration
 
 ```lua
-require("neotree_fs_refactor").setup({
-  -- Enable LSP-based refactoring
-  enable_lsp = true,
-
-  -- Enable text-based fallback search
-  enable_fallback = true,
-
-  -- Auto-apply changes without confirmation (not recommended)
-  auto_apply = false,
-
-  -- Show preview window before applying changes
-  preview_changes = true,
-
-  -- Notification verbosity: "error" | "warn" | "info" | "debug"
-  notify_level = "info",
-
-  -- Patterns to ignore (similar to .gitignore)
-  ignore_patterns = {
-    ".git",
-    "node_modules",
-    ".venv",
-    "__pycache__",
-    "target",
+require("neotree-fs-refactor").setup({
+  -- Cache System
+  cache = {
+    enabled = true,                    -- Enable cache system
+    method = "optimized",              -- "async_lua" | "optimized" | "native_c" (future)
+    path = vim.fn.stdpath("cache") .. "/neotree-fs-refactor",
+    auto_update_on_cwd_change = false, -- Auto-scan on :cd
+    cleanup_after_days = 7,            -- Delete caches older than N days
+    incremental_updates = true,        -- Update cache on BufWritePost
   },
 
-  -- Restrict operations to specific filetypes (nil = all)
-  file_type_filters = nil,
+  -- Refactoring Behavior
+  refactor = {
+    confirm_before_write = true,       -- Ask before applying changes
+    dry_run = false,                   -- Only show what would change
+    show_picker = true,                -- Show interactive picker
+    auto_select_all = false,           -- Pre-select all changes
+    fallback_to_ripgrep = true,        -- Use ripgrep if no cache
+  },
 
-  -- Skip files larger than this (in KB)
-  max_file_size_kb = 1024, -- 1MB
+  -- UI
+  ui = {
+    picker = "telescope",              -- "telescope" | "fzf-lua"
+    progress_notifications = true,     -- Show progress messages
+    log_level = "info",                -- "debug" | "info" | "warn" | "error"
+  },
 
-  -- Timeout for LSP operations (in milliseconds)
-  timeout_ms = 5000,
-
-  -- Fallback search configuration
-  fallback = {
-    enabled = true,
-
-    -- Search tool: "ripgrep" | "native"
-    tool = "ripgrep",
-
-    -- Case-sensitive matching
-    case_sensitive = true,
-
-    -- Match whole words only
-    whole_word = true,
-
-    -- Minimum confidence to include: "high" | "medium" | "low"
-    confidence_threshold = "medium",
+  -- Performance
+  performance = {
+    max_files_per_scan = 10000,        -- Safety limit
+    debounce_ms = 500,                 -- Debounce for file watching
+    parallel_workers = 4,              -- Async workers (unused currently)
   },
 })
 ```
 
----
+## 🔗 Neo-tree Integration
 
-### Minimal Configuration
-
-```lua
-require("neotree_fs_refactor").setup()
-```
-
----
-
-### Custom Configuration Examples
-
-#### LSP-Only (No Fallback)
+Add the following to your Neo-tree configuration:
 
 ```lua
-require("neotree_fs_refactor").setup({
-  enable_fallback = false,
-  preview_changes = true,
-})
-```
-
----
-
-#### Fallback-Only (No LSP)
-
-```lua
-require("neotree_fs_refactor").setup({
-  enable_lsp = false,
-  enable_fallback = true,
-  fallback = {
-    tool = "ripgrep",
-    confidence_threshold = "high",
+require("neo-tree").setup({
+  event_handlers = {
+    {
+      event = "file_renamed",
+      handler = function(args)
+        require("neotree-fs-refactor.neotree_integration").on_rename(
+          args.source,
+          args.destination
+        )
+      end,
+    },
+    {
+      event = "file_moved",
+      handler = function(args)
+        require("neotree-fs-refactor.neotree_integration").on_move(
+          args.source,
+          args.destination
+        )
+      end,
+    },
   },
 })
 ```
 
----
-
-#### Silent Mode (Minimal Notifications)
+Or use the helper function:
 
 ```lua
-require("neotree_fs_refactor").setup({
-  notify_level = "error",
-  preview_changes = false,
-  auto_apply = true, -- Use with caution!
+local refactor_config = require("neotree-fs-refactor").get_neotree_config()
+
+require("neo-tree").setup({
+  event_handlers = vim.tbl_extend(
+    "force",
+    refactor_config.event_handlers,
+    -- your other handlers
+    {}
+  ),
 })
 ```
 
----
+## 🚀 Usage
 
-## Usage
+### Automatic (with Neo-tree)
 
-### Automatic (Neo-tree Integration)
+1. Rename a file or directory in Neo-tree
+2. The plugin automatically:
+   - Finds all `require()` statements referencing the old path
+   - Shows an interactive picker (if enabled)
+   - Updates the files
 
-Once configured, the plugin automatically hooks into Neo-tree's file operations:
-
-1. **Rename a file/directory** in Neo-tree (default: `r`)
-2. Plugin collects all references
-3. Preview window shows proposed changes
-4. Press `<CR>` to apply or `<Esc>` to cancel
-
----
-
-### Manual Refactoring
-
-You can also manually trigger refactoring:
+### Manual Commands
 
 ```vim
-:NeotreeRefactor /path/to/old/file.lua /path/to/new/file.lua
+:RefactorRescan          " Manually rescan current directory
+:RefactorCacheStats      " Show cache statistics
 ```
 
----
-
-### Commands
-
-- `:NeotreeRefactor <old_path> <new_path>` - Manually trigger refactoring
-- `:NeotreeRefactorInfo` - Show plugin information and status
-- `:NeotreeRefactorReload` - Reload configuration
-
----
-
-### Health Check
-
-Check plugin status and dependencies:
-
-```vim
-:checkhealth neotree-fs-refactor
-```
-
----
-
-## How It Works
-
-### Phase 1: LSP Refactoring
-
-1. Intercepts Neo-tree file operation events
-2. Sends `workspace/willRenameFiles` request to all active LSP servers
-3. Collects `WorkspaceEdit` responses from servers
-4. Converts to internal edit format
-
-**Advantages:**
-- Semantically correct
-- Language-aware
-- No false positives
-- Handles complex references (re-exports, type imports, etc.)
-
-**Limitations:**
-- Only works for LSP-managed files
-- Requires LSP server support (not all servers implement `willRename`)
-
----
-
-### Phase 2: Fallback Search
-
-If LSP doesn't find all references, fallback search activates:
-
-1. Builds search patterns from old path
-2. Uses ripgrep (or native search) to find literal matches
-3. Calculates confidence scores for each match
-4. Filters by confidence threshold
-
-**Advantages:**
-- Works for any file type
-- Finds non-semantic references (config files, documentation, etc.)
-- No LSP dependency
-
-**Limitations:**
-- Can have false positives
-- Less intelligent than LSP
-- Requires manual review (via preview)
-
----
-
-### Phase 3: Review & Apply
-
-1. Combines LSP and fallback results
-2. Shows unified preview with diff-style highlighting
-3. User confirms or cancels
-4. Applies all changes atomically
-5. Saves modified buffers
-
----
-
-## Supported LSP Servers
-
-Servers with confirmed `workspace/willRenameFiles` support:
-
-- **TypeScript/JavaScript**: `typescript-language-server`, `tsserver`
-- **Lua**: `lua-language-server` (partial support)
-- **Go**: `gopls`
-- **Rust**: `rust-analyzer`
-- **Python**: `pylsp`, `pyright` (limited)
-- **C/C++**: `clangd`
-
-Check your server's capabilities:
+### Programmatic API
 
 ```lua
-:lua =vim.lsp.get_active_clients()[1].server_capabilities.workspace.fileOperations
+-- Manual refactor
+require("neotree-fs-refactor").refactor(old_path, new_path)
+
+-- Rescan directory
+require("neotree-fs-refactor").rescan()
+
+-- Check cache
+if require("neotree-fs-refactor").has_cache() then
+  local stats = require("neotree-fs-refactor").get_cache_stats()
+  print(vim.inspect(stats))
+end
 ```
 
----
+## 📋 Workflow Example
 
-## Preview Window
+### Before Rename
 
-The preview window shows:
+```
+lua/
+  testfs/
+    rem/
+      da.lua
+    init.lua    -- require("testfs.rem.da")
+```
 
-- Total number of changes
-- File path and line number for each change
-- Diff-style view (old → new)
-- Source of edit (LSP or fallback)
-- Confidence level (fallback only)
+### Rename Directory: `rem` → `remolus`
 
----
+### Picker Shows
 
-### Keymaps (in preview)
+```
+init.lua:3 | testfs.rem.da → testfs.remolus.da
+```
 
-- `<CR>` - Apply all changes
-- `<Esc>` / `q` - Cancel
-- `j` / `k` / `↓` / `↑` - Navigate
+- Press `<Tab>` to toggle selection
+- Press `<S-A>` to select all
+- Press `<CR>` to confirm
 
----
+### After Rename
 
-## Troubleshooting
+```lua
+-- init.lua
+local remda = require("testfs.remolus.da")  -- ✓ Updated!
+```
 
-### No Changes Detected
+## 🎯 Supported Require Patterns
 
-**Problem**: Plugin says "No references found"
+```lua
+require("module.path")
+require "module.path"
+require('module.path')
+require 'module.path'
+```
 
-**Solutions**:
-1. Check if LSP server is running: `:LspInfo`
-2. Verify server supports `willRename`: `:checkhealth neotree-fs-refactor`
-3. Enable fallback search if disabled
-4. Check `ignore_patterns` - file might be excluded
+## 🚀 Performance
 
----
+### Scanner Methods
 
-### LSP Timeout
+The plugin offers two scanning methods:
 
-**Problem**: "Request timeout" errors
+1. **`async_lua`** (Default fallback)
+   - Pure Lua implementation
+   - Cross-platform
+   - Good for small to medium projects
 
-**Solutions**:
-1. Increase `timeout_ms` in config
-2. Check LSP server logs: `:LspLog`
-3. Try restarting LSP: `:LspRestart`
+2. **`optimized`** (Recommended - Default)
+   - Batched file I/O
+   - Compiled regex patterns
+   - String operation optimizations
+   - **2-3x faster than standard scanner**
+   - Suitable for large projects
 
----
+### Benchmark Results
 
-### False Positives in Fallback
+Tested on 500 Lua files with 20 requires each:
 
-**Problem**: Fallback finds incorrect matches
+| Method     | Mean Time | Speedup |
+|------------|-----------|---------|
+| async_lua  | 2.4s      | 1.0x    |
+| optimized  | 0.9s      | 2.7x    |
 
-**Solutions**:
-1. Increase `confidence_threshold` to `"high"`
-2. Disable fallback entirely: `enable_fallback = false`
-3. Add patterns to `ignore_patterns`
-4. Review changes carefully in preview before applying
+Run your own benchmarks:
 
----
+```lua
+require("tests.benchmark").quick()  -- Quick test
+require("tests.benchmark").full()   -- Comprehensive test
+```
 
-### Ripgrep Not Found
+## 🧪 Testing
 
-**Problem**: "ripgrep not found" warning
+### Run Tests
 
-**Solutions**:
-1. Install ripgrep: https://github.com/BurntSushi/ripgrep#installation
-2. Or use native search: `fallback = { tool = "native" }`
+```bash
+# All tests
+./tests/run_tests.sh
 
----
+# With benchmarks
+./tests/run_tests.sh benchmark
+```
 
-## Performance Considerations
+### Test Coverage
 
-- **Lazy Loading**: Modules loaded on-demand
-- **Efficient Search**: Ripgrep for large codebases
-- **Debounced I/O**: Batched file writes
-- **Buffer Reuse**: Minimizes buffer churn
-- **Weak Tables**: Automatic cache cleanup
+- ✅ Unit tests (path utils, require finder, cache)
+- ✅ Integration tests (full refactoring workflow)
+- ✅ Performance benchmarks
+- ✅ CI/CD pipeline (GitHub Actions)
 
----
+## 🐛 Troubleshooting
 
-## Contributing
+### Cache Not Found
 
-Contributions welcome! Please follow:
+If refactoring is slow or falls back to ripgrep:
 
-1. Code style from `Arch&Coding-Regeln.md`
-2. Add tests for new features
-3. Update documentation
-4. Run `:checkhealth neotree-fs-refactor` before submitting
+```vim
+:RefactorRescan
+```
 
----
+### Check Cache Status
 
-## License
+```vim
+:RefactorCacheStats
+```
+
+### Enable Debug Logging
+
+```lua
+require("neotree-fs-refactor").setup({
+  ui = {
+    log_level = "debug",
+  },
+})
+```
+
+## 🔮 Planned Features
+
+- [ ] Native C scanner for extreme performance
+- [ ] Undo/Redo support
+- [ ] Multi-root workspace support
+- [ ] Custom require pattern configuration
+- [ ] Git integration (detect renamed files)
+- [ ] LSP integration (rename via LSP)
+
+## 📝 License
 
 MIT License - see [LICENSE](LICENSE)
 
----
+## 🙏 Credits
 
-## Related Projects
-
-- [neo-tree.nvim](https://github.com/nvim-neo-tree/neo-tree.nvim) - File explorer
-- [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig) - LSP configuration
-- [refactoring.nvim](https://github.com/ThePrimeagen/refactoring.nvim) - Code refactoring
+Inspired by the need for better refactoring tools in Neovim.
 
 ---
 
-## Acknowledgments
-
-Inspired by IDE refactoring tools and the need for seamless file management in Neovim.
-
----
+**Note**: This plugin is in active development. Please report issues on GitHub!

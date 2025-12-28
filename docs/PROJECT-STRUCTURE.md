@@ -1,424 +1,352 @@
-# neotree-fs-refactor.nvim - Project Structure
+# Project Structure
 
-## Table of content
-
-  - [Complete File Tree](#complete-file-tree)
-  - [Module Overview](#module-overview)
-    - [Core Modules (lua/neotree_fs_refactor/)](#core-modules-luaneotree_fs_refactor)
-      - [1. **init.lua** (Main Entry Point)](#1-initlua-main-entry-point)
-      - [2. **config.lua** (Configuration Management)](#2-configlua-configuration-management)
-      - [3. **utils.lua** (Utility Functions)](#3-utilslua-utility-functions)
-      - [4. **lsp.lua** (LSP Integration)](#4-lsplua-lsp-integration)
-      - [5. **fallback.lua** (Fallback Search)](#5-fallbacklua-fallback-search)
-      - [6. **orchestrator.lua** (Workflow Orchestration)](#6-orchestratorlua-workflow-orchestration)
-      - [7. **neotree.lua** (Neo-tree Integration)](#7-neotreelua-neo-tree-integration)
-      - [8. **ui/preview.lua** (Preview Window)](#8-uipreviewlua-preview-window)
-      - [9. **health.lua** (Health Check)](#9-healthlua-health-check)
-      - [10. **@types/init.lua** (Type Definitions)](#10-typesinitlua-type-definitions)
-  - [Data Flow](#data-flow)
-    - [Typical Refactoring Flow](#typical-refactoring-flow)
-  - [Design Principles Applied](#design-principles-applied)
-    - [From Arch&Coding-Regeln.md:](#from-archcoding-regelnmd)
-  - [Configuration Philosophy](#configuration-philosophy)
-    - [Lazy Resolution Pattern](#lazy-resolution-pattern)
-  - [Error Handling Strategy](#error-handling-strategy)
-    - [Three-Layer Approach:](#three-layer-approach)
-  - [Testing Strategy](#testing-strategy)
-    - [Test Coverage:](#test-coverage)
-    - [Test Framework:](#test-framework)
-  - [Future Enhancements](#future-enhancements)
-    - [Potential Improvements:](#potential-improvements)
-  - [Summary](#summary)
-
----
-
-## Complete File Tree
+## Directory Layout
 
 ```
-neotree_fs_refactor.nvim/
+neotree-fs-refactor.nvim/
 ├── lua/
-│   └── neotree_fs_refactor/
-│       ├── @types/
-│       │   └── init.lua              # Type definitions (LuaLS annotations)
-│       ├── ui/
-│       │   └── preview.lua           # Preview window implementation
-│       ├── config.lua                # Configuration management
-│       ├── utils.lua                 # Utility functions
-│       ├── lsp.lua                   # LSP integration
-│       ├── fallback.lua              # Fallback text search
-│       ├── orchestrator.lua          # Refactoring workflow
-│       ├── neotree.lua               # Neo-tree hooks
-│       ├── health.lua                # Health check
-│       └── init.lua                  # Main entry point
+│   └── neotree-fs-refactor/
+│       ├── init.lua                 # Plugin entry point & setup
+│       ├── core/
+│       │   ├── event_handlers.lua   # Neo-tree event integration
+│       │   └── refactor.lua         # Core refactoring logic
+│       └── utils/
+│           ├── scanner.lua          # File reference scanner
+│           ├── path.lua             # Path manipulation utilities
+│           └── helpers.lua          # General helper functions
 ├── plugin/
-│   └── neotree_fs_refactor.lua       # Plugin specification
-├── tests/
-│   ├── test_utils.lua                # Testing framework
-│   ├── config_test.lua               # Config tests
-│   ├── utils_test.lua                # Utils tests
-│   └── integration_test.lua          # Integration tests
-├── examples/
-│   └── configurations.lua            # Example configurations
+│   └── neotree-fs-refactor.lua      # Auto-load plugin file
+├── doc/
+│   └── neotree-fs-refactor.txt      # Vim help documentation
 ├── docs/
-│   ├── Arch&Coding-Regeln.md        # Architecture & coding rules
-│   └── Checklist.md                 # Development checklist
-├── README.md                         # User documentation
-├── CONTRIBUTING.md                   # Contributor guide
-└── LICENSE                           # MIT License
+│   ├── Arch&Coding-Regeln.md        # Architecture & coding guidelines
+│   ├── Checklist.md                 # Development checklist
+│   └── STRUCTURE.md                 # This file
+├── README.md                        # User documentation
+├── LICENSE                          # MIT License
+└── .github/
+    └── workflows/
+        └── ci.yml                   # CI/CD configuration
 ```
 
----
+## Module Dependencies
 
-## Module Overview
+```
+init.lua
+  └─> core/event_handlers.lua
+        ├─> core/refactor.lua
+        │     ├─> utils/scanner.lua
+        │     │     └─> utils/path.lua
+        │     └─> utils/path.lua
+        └─> utils/helpers.lua
+              └─> utils/path.lua (indirect)
+```
 
-### Core Modules (lua/neotree_fs_refactor/)
+## Module Responsibilities
 
-#### 1. **init.lua** (Main Entry Point)
-- **Responsibility**: Plugin initialization, user commands, public API
-- **Key Functions**:
-  - `setup(opts)`: Initialize plugin with configuration
-  - `refactor_path(old, new)`: Manual refactoring trigger
-  - `show_info()`: Display plugin status
-  - `reload()`: Reload configuration
-- **Dependencies**: All other modules
-- **Public**: Yes
+### `lua/neotree-fs-refactor/init.lua`
+- Plugin setup and configuration
+- Configuration validation
+- Health check integration
+- Entry point for user
 
----
+### `lua/neotree-fs-refactor/core/event_handlers.lua`
+- Registers neo-tree event handlers
+- Debounces file operations
+- Coordinates between neo-tree and refactor module
+- Error handling for events
 
-#### 2. **config.lua** (Configuration Management)
-- **Responsibility**: Configuration storage, validation, access
-- **Key Functions**:
-  - `setup(opts)`: Initialize config with user options
-  - `get(key)`: Retrieve config value (lazy resolution)
-  - `validate()`: Validate configuration
-  - `is_lsp_enabled()`, `should_auto_apply()`, etc.: Config checks
-- **Design Pattern**: Metatable-based lazy initialization
-- **Dependencies**: None (foundation layer)
-- **Public**: Yes (internal API)
+### `lua/neotree-fs-refactor/core/refactor.lua`
+- Core refactoring logic
+- Updates references in buffers
+- Updates references in files on disk
+- Language-specific pattern matching
+- Statistics tracking
 
----
+### `lua/neotree-fs-refactor/utils/scanner.lua`
+- File reference detection
+- Ripgrep integration
+- Fallback Lua-based scanning
+- Pattern building for different languages
 
-#### 3. **utils.lua** (Utility Functions)
-- **Responsibility**: Pure utility functions for paths, buffers, validation
-- **Key Functions**:
-  - Path operations: `normalize_path()`, `to_absolute()`, `basename()`, `dirname()`, `relative_path()`
-  - File system: `path_exists()`, `is_directory()`, `get_file_size_kb()`
-  - Validation: `should_ignore()`, `is_valid_buffer()`, `is_valid_window()`
-  - Buffer operations: `get_buf_lines()`, `set_buf_lines()`
-  - Helpers: `escape_pattern()`, `debounce()`, `deep_copy()`, `merge_tables()`
-- **Design Pattern**: Pure functions, no side effects
-- **Dependencies**: None (foundation layer)
-- **Public**: Yes (internal API)
+### `lua/neotree-fs-refactor/utils/path.lua`
+- Path normalization
+- Module name conversion (Lua, Python, TS/JS)
+- Relative path calculations
+- File type detection
 
----
+### `lua/neotree-fs-refactor/utils/helpers.lua`
+- User notifications
+- Table utilities
+- String utilities
+- Debouncing utilities
 
-#### 4. **lsp.lua** (LSP Integration)
-- **Responsibility**: Communicate with LSP servers for semantic refactoring
-- **Key Functions**:
-  - `collect_edits(operation)`: Request edits from all LSP clients
-  - `apply_edits(lsp_result)`: Apply LSP edits to buffers
-- **LSP Methods Used**:
-  - `workspace/willRenameFiles`: Request rename edits
-  - `workspace/applyEdit`: Apply workspace edits
-- **Dependencies**: config, utils
-- **Public**: Yes (internal API)
+## Require Paths
 
----
+### Correct Import Statements
 
-#### 5. **fallback.lua** (Fallback Search)
-- **Responsibility**: Text-based search when LSP unavailable
-- **Key Functions**:
-  - `search(operation)`: Perform text search for path references
-  - `apply_edits(fallback_result)`: Apply fallback edits
-- **Search Methods**:
-  - Ripgrep (fast, external)
-  - Native Lua (slower, no dependencies)
-- **Dependencies**: config, utils
-- **Public**: Yes (internal API)
+All modules should use the full plugin namespace:
 
----
+```lua
+-- In init.lua
+local event_handlers = require("neotree-fs-refactor.core.event_handlers")
 
-#### 6. **orchestrator.lua** (Workflow Orchestration)
-- **Responsibility**: Coordinate LSP and fallback phases, create execution plans
-- **Key Functions**:
-  - `create_plan(operation)`: Create refactoring plan
-  - `execute_plan(plan, skip_review)`: Execute plan
-  - `get_plan_summary(plan)`: Get statistics
-- **Workflow**:
-  1. Validate operation
-  2. Phase 1: Collect LSP edits
-  3. Phase 2: Collect fallback edits (if enabled)
-  4. Create unified plan
-- **Dependencies**: config, lsp, fallback, utils
-- **Public**: Yes (internal API)
+-- In core/event_handlers.lua
+local refactor = require("neotree-fs-refactor.core.refactor")
+local utils = require("neotree-fs-refactor.utils.helpers")
 
----
+-- In core/refactor.lua
+local scanner = require("neotree-fs-refactor.utils.scanner")
+local path_utils = require("neotree-fs-refactor.utils.path")
 
-#### 7. **neotree.lua** (Neo-tree Integration)
-- **Responsibility**: Hook into Neo-tree events, trigger refactoring
-- **Key Functions**:
-  - `on_renamed(event)`: Handle file/folder rename
-  - `on_moved(event)`: Handle file/folder move
-  - `on_deleted(event)`: Handle file/folder delete
-  - `register_hooks()`: Subscribe to Neo-tree events
-- **Neo-tree Events**:
-  - `FILE_RENAMED`
-  - `FILE_MOVED`
-  - `FILE_DELETED`
-- **Dependencies**: config, orchestrator, preview, utils
-- **Public**: No (internal, called by Neo-tree)
+-- In utils/scanner.lua
+local path_utils = require("neotree-fs-refactor.utils.path")
 
----
+-- In utils/helpers.lua
+-- No internal dependencies (leaf module)
+```
 
-#### 8. **ui/preview.lua** (Preview Window)
-- **Responsibility**: Interactive change preview, user confirmation
-- **Key Functions**:
-  - `show_preview(plan, callback)`: Display preview window
-  - `close_preview()`: Close and cleanup
-  - `is_preview_open()`: Check status
-- **UI Features**:
-  - Floating window with diff-style display
-  - Keymaps: `<CR>` (confirm), `<Esc>` (cancel)
-  - Syntax highlighting
-- **Dependencies**: config, utils
-- **Public**: Yes (internal API)
+### Why Full Paths?
 
----
-
-#### 9. **health.lua** (Health Check)
-- **Responsibility**: Diagnostic checks for `:checkhealth`
-- **Key Functions**:
-  - `check()`: Run all health checks
-- **Checks**:
-  - Neovim version
-  - Neo-tree installation
-  - Plugin modules
-  - LSP capabilities
-  - Fallback tools
-  - Configuration validation
-- **Dependencies**: All modules (for validation)
-- **Public**: Yes (called by Neovim)
-
----
-
-#### 10. **@types/init.lua** (Type Definitions)
-- **Responsibility**: LuaLS type annotations
-- **Key Types**:
-  - `Neotree.FSRefactor.FSOperation`: Filesystem operation
-  - `Neotree.FSRefactor.ChangePlan`: Complete refactoring plan
-  - `Neotree.FSRefactor.LSPResult`, `Neotree.FSRefactor.FallbackResult`: Phase results
-  - `Neotree.FSRefactor.Config`: Configuration schema
-  - `Neotree.FSRefactor.PreviewState`: UI state
-  - `Neotree.FSRefactor.ApplyResult`: Execution result
-- **Dependencies**: None
-- **Public**: No (annotations only)
-
----
+1. **Clarity**: Makes module origin obvious
+2. **Consistency**: Same pattern across all files
+3. **No Ambiguity**: Avoids conflicts with other plugins
+4. **Lua Standards**: Follows Neovim plugin conventions
 
 ## Data Flow
 
-### Typical Refactoring Flow
+### Rename/Move Operation
 
 ```
-1. Neo-tree Event
-   └─> neotree.lua::on_renamed()
-       │
-2. Create Operation
-   └─> orchestrator.lua::create_plan()
-       │
-3. Phase 1: LSP
-   └─> lsp.lua::collect_edits()
-       ├─> Request workspace/willRenameFiles
-       └─> Parse WorkspaceEdit responses
-       │
-4. Phase 2: Fallback
-   └─> fallback.lua::search()
-       ├─> Build search patterns
-       ├─> Execute ripgrep/native search
-       └─> Convert to edits
-       │
-5. Create Plan
-   └─> orchestrator.lua (combine results)
-       │
-6. Preview (optional)
-   └─> ui/preview.lua::show_preview()
-       ├─> User confirms/cancels
-       └─> Callback with decision
-       │
-7. Execute
-   └─> orchestrator.lua::execute_plan()
-       ├─> lsp.lua::apply_edits()
-       └─> fallback.lua::apply_edits()
-       │
-8. Complete
-   └─> Notify user of results
+Neo-tree Event
+    │
+    ↓
+event_handlers.on_file_renamed()
+    │
+    ├─> Debounce (100ms default)
+    │
+    ↓
+refactor.rename_references()
+    │
+    ├─> Update open buffers
+    │   └─> refactor.update_buffers()
+    │         └─> Pattern matching per filetype
+    │
+    ├─> Scan project files
+    │   └─> scanner.find_files_with_references()
+    │         ├─> Use ripgrep (if available)
+    │         └─> Use Lua scanning (fallback)
+    │
+    ├─> Update files on disk
+    │   └─> refactor.update_file_on_disk()
+    │
+    └─> Report results
+        └─> helpers.notify_refactor_result()
 ```
 
----
+### Delete Operation
 
-## Design Principles Applied
-
-### From Arch&Coding-Regeln.md:
-
-1. **Sicherheitsprinzipien** ✅
-   - All API calls wrapped in `pcall`
-   - Type guards before operations
-   - Buffer/window validation
-   - Structured error handling
-
-2. **Modularisierung** ✅
-   - Single responsibility per module
-   - Pure functions where possible
-   - No global state
-   - Explicit dependencies
-
-3. **Buffer/Window Management** ✅
-   - Always validate handles
-   - Check `is_valid` before use
-   - Proper cleanup
-
-4. **Dokumentation** ✅
-   - Comprehensive LuaLS annotations in @types/
-   - Module headers with @brief, @description
-   - Function documentation with @param, @return
-   - @see links between related modules
-
-5. **Testbarkeit** ✅
-   - Dependency injection
-   - Pure functions
-   - No hardcoded state
-   - Test framework included
-
-6. **Performance** ✅
-   - Lazy initialization (config metatable)
-   - Table pre-allocation
-   - Efficient string operations
-   - Debounced I/O
-
----
-
-## Configuration Philosophy
-
-### Lazy Resolution Pattern
-
-```lua
--- Config uses metatable for lazy field initialization
-local config_mt = {
-  __index = function(tbl, key)
-    local default_val = defaults[key]
-
-    if type(default_val) == "table" then
-      local nested = setmetatable({}, config_mt)
-      rawset(tbl, key, nested)
-      return nested
-    end
-
-    return default_val
-  end
-}
+```
+Neo-tree Event
+    │
+    ↓
+event_handlers.on_file_deleted()
+    │
+    ├─> Debounce (100ms default)
+    │
+    ↓
+refactor.delete_references()
+    │
+    ├─> Scan for remaining references
+    │   └─> scanner.find_files_with_references()
+    │
+    └─> Warn user if references exist
+        └─> helpers.notify_refactor_result()
 ```
 
-**Benefits**:
-- Only initialize fields when accessed
-- Saves memory for unused config options
-- Allows dynamic default resolution
-- Supports deep nesting
+## Configuration Flow
 
----
+```
+User Config
+    │
+    ↓
+init.setup(opts)
+    │
+    ├─> Merge with defaults
+    │
+    ├─> Validate configuration
+    │
+    ├─> Check dependencies
+    │
+    └─> Initialize event handlers
+        └─> event_handlers.setup(config)
+              └─> Register neo-tree events
+```
 
 ## Error Handling Strategy
 
-### Three-Layer Approach:
+### Layers of Safety
 
-1. **Validation Layer** (Before operation)
-   ```lua
-   local valid, err = validate_operation(operation)
-   if not valid then
-     return nil, err
-   end
-   ```
+1. **Entry Point** (`init.lua`)
+   - Validates neo-tree existence
+   - Wraps setup in pcall
+   - Provides user feedback
 
-2. **Protected Execution** (During operation)
-   ```lua
-   local ok, result = pcall(risky_function, args)
-   if not ok then
-     results.errors[#results.errors + 1] = tostring(result)
-   end
-   ```
+2. **Event Handlers** (`event_handlers.lua`)
+   - Validates event arguments
+   - Wraps refactor calls in pcall
+   - Provides error notifications
 
-3. **Result Reporting** (After operation)
-   ```lua
-   return {
-     success = #errors == 0,
-     applied_count = count,
-     failed_count = failures,
-     errors = errors, -- Structured error objects
-   }
-   ```
+3. **Core Logic** (`refactor.lua`)
+   - Validates paths
+   - Guards buffer operations
+   - Safe file I/O
 
----
+4. **Utilities**
+   - Input validation
+   - Graceful degradation
+   - Fallback mechanisms
+
+### Example Error Path
+
+```lua
+-- init.lua
+local ok, err = pcall(function()
+  require("neotree-fs-refactor.core.event_handlers").setup(config)
+end)
+
+if not ok then
+  vim.notify("Setup failed: " .. err, vim.log.levels.ERROR)
+end
+```
+
+## Performance Considerations
+
+### Hot Paths (Optimized)
+
+1. **Buffer Updates**
+   - In-memory operations
+   - Direct API calls
+   - No I/O blocking
+
+2. **Ripgrep Integration**
+   - Native binary
+   - Parallel execution
+   - Filtered results
+
+### Cold Paths (Acceptable)
+
+1. **Lua Scanning**
+   - Fallback only
+   - Small projects OK
+   - Limited by I/O
+
+2. **File Writing**
+   - Infrequent operation
+   - User-initiated
+   - Progress feedback
+
+### Optimization Strategies
+
+1. **Debouncing**: Prevent duplicate operations
+2. **Lazy Loading**: Load modules on demand
+3. **Caching**: Reuse compiled patterns
+4. **Filtering**: Respect ignore patterns early
 
 ## Testing Strategy
 
-### Test Coverage:
+### Unit Tests (Planned)
 
-1. **Unit Tests**
-   - config_test.lua: Configuration validation
-   - utils_test.lua: Utility functions
+```
+tests/
+├── core/
+│   ├── refactor_spec.lua
+│   └── event_handlers_spec.lua
+└── utils/
+    ├── scanner_spec.lua
+    ├── path_spec.lua
+    └── helpers_spec.lua
+```
 
-2. **Integration Tests**
-   - integration_test.lua: Module loading, health checks
+### Integration Tests (Planned)
 
-3. **Manual Testing**
-   - Real Neo-tree operations
-   - Different LSP servers
-   - Various file types
+```
+tests/integration/
+├── rename_scenario_spec.lua
+├── move_scenario_spec.lua
+└── delete_scenario_spec.lua
+```
 
----
+### Manual Testing Checklist
 
-### Test Framework:
-- Custom lightweight framework in `test_utils.lua`
-- Assertion helpers
-- Suite runner with reporting
+- [ ] Rename single file
+- [ ] Rename directory
+- [ ] Move file to different directory
+- [ ] Delete file with references
+- [ ] Multiple simultaneous operations
+- [ ] Large project performance
+- [ ] Edge cases (symlinks, special chars)
 
----
+## Compliance with Coding Guidelines
+
+This project follows the guidelines in `docs/Arch&Coding-Regeln.md`:
+
+### ✅ Implemented
+
+- [x] Single Responsibility Principle
+- [x] Error handling with pcall
+- [x] Type annotations (@class, @param, @return)
+- [x] Module documentation (@module, @brief, @description)
+- [x] No global state
+- [x] Pure functions where possible
+- [x] Local helper functions
+- [x] Debouncing for performance
+- [x] Path normalization
+- [x] Cross-platform support (POSIX & Windows)
+
+### 📋 Checklist Items
+
+Refer to `docs/Checklist.md` for detailed review items.
 
 ## Future Enhancements
 
-### Potential Improvements:
+### Planned Features
 
-1. **Undo Stack Integration**
-   - Track changes for rollback
-   - Integration with Neovim undo
+1. **AST-Based Refactoring**
+   - Use treesitter for accurate parsing
+   - Handle dynamic imports
+   - Better scope analysis
 
-2. **Batch Operations**
-   - Multiple renames at once
-   - Folder-wide refactoring
+2. **LSP Integration**
+   - Leverage language servers
+   - Semantic understanding
+   - Cross-reference resolution
 
-3. **Custom Rules**
-   - User-defined pattern matching
-   - Project-specific ignore rules
+3. **Undo/Redo Support**
+   - Save refactor history
+   - Atomic operations
+   - Rollback capability
 
-4. **Better Diff Preview**
-   - Side-by-side diff view
-   - Syntax highlighting in preview
+4. **Configuration Presets**
+   - Language-specific defaults
+   - Project templates
+   - Shareable configs
 
-5. **Performance Optimizations**
-   - Parallel search
-   - Incremental updates
-   - Background processing
+5. **Performance Dashboard**
+   - Operation metrics
+   - Bottleneck identification
+   - Optimization suggestions
 
----
+### Community Contributions Welcome
 
-## Summary
+- Additional language support
+- Performance improvements
+- Test coverage
+- Documentation enhancements
+- Bug fixes
 
-This plugin provides a **production-ready**, **well-architected** solution for automatic refactoring when renaming/moving files in Neo-tree. It follows best practices from `Arch&Coding-Regeln.md`, includes comprehensive testing, and is designed for extensibility and maintainability.
+## References
 
-**Key Strengths**:
-- Safe by default (preview, validation, error handling)
-- Flexible (LSP + fallback, configurable)
-- Well-documented (inline annotations, README, CONTRIBUTING)
-- Testable (dependency injection, pure functions)
-- Performant (lazy loading, efficient algorithms)
-
----
+- [Neo-tree Events Documentation](https://github.com/nvim-neo-tree/neo-tree.nvim/blob/main/doc/neo-tree.txt)
+- [Neovim Plugin Development](https://neovim.io/doc/user/lua-guide.html)
+- [LuaLS Annotations](https://luals.github.io/wiki/annotations/)
