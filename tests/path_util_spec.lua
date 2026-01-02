@@ -23,6 +23,7 @@ describe("path_util", function()
 
 		it("should handle empty paths", function()
 			assert.equals("", path_util.normalize(""))
+            ---@diagnostic disable-next-line
 			assert.equals("", path_util.normalize(nil))
 		end)
 	end)

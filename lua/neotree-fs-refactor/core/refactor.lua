@@ -124,19 +124,26 @@ end
 ---@param filetype string File type for context
 ---@return string modified_line Line with replacements applied
 local function replace_path_in_line(line, old_path, new_path, filetype)
-	local patterns = get_patterns_for_filetype(filetype)
-	local modified = line
+  local patterns = get_patterns_for_filetype(filetype)
 
-	for _, pattern_info in ipairs(patterns) do
-		local result = pattern_info.replacer(modified, old_path, new_path)
-		if result ~= modified then
-			modified = result
-			-- Log for debugging
-			notify.debug(str_fmt("[DEBUG] Replaced in line:\n  Old: %s\n  New: %s", line, modified))
-		end
-	end
+  -- Type guard: Ensure patterns is a table
+  if not patterns or type(patterns) ~= "table" then
+    notify.warn(string.format("No patterns found for filetype: %s", filetype))
+    return line
+  end
 
-	return modified
+  local modified = line
+
+  for _, pattern_info in ipairs(patterns) do
+    local result = pattern_info.replacer(modified, old_path, new_path)
+    if result ~= modified then
+      modified = result
+      -- Log for debugging
+      notify.debug(string.format("[DEBUG] Replaced in line:\n  Old: %s\n  New: %s", line, modified))
+    end
+  end
+
+  return modified
 end
 
 ---Update all loaded buffers containing references

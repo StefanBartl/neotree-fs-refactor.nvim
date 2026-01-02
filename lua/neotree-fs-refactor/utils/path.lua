@@ -9,7 +9,7 @@ local M = {}
 local is_windows = vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
 
 --- Normalize path separators to forward slashes
----@param path string|nil Path to normalize
+---@param path string Path to normalize
 ---@return string Normalized path
 function M.normalize(path)
   if not path then return "" end
