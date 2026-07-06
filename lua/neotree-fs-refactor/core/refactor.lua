@@ -15,8 +15,11 @@ local notify = require("neotree-fs-refactor.utils.notify")
 
 ---Get replacement patterns for specific filetype
 ---@param filetype string File type
+---@param ref_file string Absolute path of the file being patched (only used
+---                       for TS/JS, where the import specifier is relative to
+---                       this file, not to old_path/new_path themselves)
 ---@return table|nil patterns List of pattern configurations
-local function get_patterns_for_filetype(filetype)
+local function get_patterns_for_filetype(filetype, ref_file)
 	local patterns = {}
 
 	if filetype == "lua" then
@@ -25,28 +28,38 @@ local function get_patterns_for_filetype(filetype)
 			replacer = function(line, old_path, new_path)
 				local old_module = path_utils.file_to_module(old_path)
 				local new_module = path_utils.file_to_module(new_path)
-            if not old_module or not new_module then
-                notify.error("module is nil")
-                    return nil
-            end
 
-
-            if old_module == "" or new_module == "" then
-                return line
-            end
+				if not old_module or not new_module or old_module == "" or new_module == "" then
+					return line
+				end
 
 				-- Escape special pattern characters
 				local old_escaped = old_module:gsub("[%.%-%+%*%?%[%]%^%$%(%)%%]", "%%%1")
 
-				-- Pattern 1: require("module")
+				-- Pattern 1: require("module") — exact match
 				local pattern1 = "require%s*%(%s*[\"']" .. old_escaped .. "[\"']%s*%)"
 				local replacement1 = 'require("' .. new_module .. '")'
 				line = line:gsub(pattern1, replacement1)
 
-				-- Pattern 2: require "module" (without parentheses)
+				-- Pattern 2: require "module" (without parentheses) — exact match
 				local pattern2 = "require%s+[\"']" .. old_escaped .. "[\"']"
 				local replacement2 = 'require "' .. new_module .. '"'
 				line = line:gsub(pattern2, replacement2)
+
+				-- Pattern 3/4: require("module.sub.sub2") — submodule match, so
+				-- renaming a directory ("testfs.rem" -> "testfs.remolus") also
+				-- updates requires of anything nested under it
+				-- ("testfs.rem.da" -> "testfs.remolus.da"). The suffix must
+				-- start with a literal "." so e.g. "testfs.rem_other" (a
+				-- different module that merely shares a prefix) never matches.
+				line = line:gsub(
+					"(require%s*%(%s*[\"'])" .. old_escaped .. "(%.[%w_%.]*)([\"']%s*%))",
+					function(pre, suffix, post) return pre .. new_module .. suffix .. post end
+				)
+				line = line:gsub(
+					"(require%s+[\"'])" .. old_escaped .. "(%.[%w_%.]*)([\"'])",
+					function(pre, suffix, post) return pre .. new_module .. suffix .. post end
+				)
 
 				return line
 			end,
@@ -55,8 +68,9 @@ local function get_patterns_for_filetype(filetype)
 		-- TypeScript/JavaScript import patterns
 		table.insert(patterns, {
 			replacer = function(line, old_path, new_path)
-				local old_rel = path_utils.to_relative_import(old_path)
-				local new_rel = path_utils.to_relative_import(new_path)
+				local ref_dir = path_utils.parent(ref_file)
+				local old_rel = path_utils.to_relative_import(old_path, ref_dir)
+				local new_rel = path_utils.to_relative_import(new_path, ref_dir)
 
 				if old_rel == "" or new_rel == "" then
 					return line
@@ -87,7 +101,7 @@ local function get_patterns_for_filetype(filetype)
 				local old_module = path_utils.path_to_python_module(old_path)
 				local new_module = path_utils.path_to_python_module(new_path)
 
-				if old_module == "" or new_module == "" then
+				if not old_module or not new_module or old_module == "" or new_module == "" then
 					return line
 				end
 
@@ -122,9 +136,10 @@ end
 ---@param old_path string Path to replace
 ---@param new_path string Replacement path
 ---@param filetype string File type for context
+---@param ref_file string Absolute path of the file being patched
 ---@return string modified_line Line with replacements applied
-local function replace_path_in_line(line, old_path, new_path, filetype)
-  local patterns = get_patterns_for_filetype(filetype)
+local function replace_path_in_line(line, old_path, new_path, filetype, ref_file)
+  local patterns = get_patterns_for_filetype(filetype, ref_file)
 
   -- Type guard: Ensure patterns is a table
   if not patterns or type(patterns) ~= "table" then
@@ -166,7 +181,7 @@ local function update_buffers(old_path, new_path, config)
 				local changes_made = false
 
 				for i, line in ipairs(lines) do
-					local new_line = replace_path_in_line(line, old_path, new_path, ft)
+					local new_line = replace_path_in_line(line, old_path, new_path, ft, buf_path)
 					if new_line ~= line then
 						changed_lines[i] = new_line
 						changes_made = true
@@ -204,15 +219,10 @@ end
 ---@return number lines_changed Number of lines changed
 ---@diagnostic disable-next-line: unused-local
 local function update_file_on_disk(file_path, old_path, new_path, config)
-	local ok, lines = pcall(function()
-		local f = io.open(file_path, "r")
-		if not f then
-			return nil
-		end
-		local content = f:read("*all")
-		f:close()
-		return vim.split(content, "\n")
-	end)
+	-- vim.fn.readfile/writefile (not raw io.open) on purpose: binary-safe and
+	-- consistent line-ending handling regardless of platform, rather than
+	-- relying on Lua's implicit C-runtime text-mode newline translation.
+	local ok, lines = pcall(vim.fn.readfile, file_path)
 
 	if not ok or not lines then
 		return 0
@@ -223,7 +233,7 @@ local function update_file_on_disk(file_path, old_path, new_path, config)
 	local changes_made = false
 
 	for i, line in ipairs(lines) do
-		local new_line = replace_path_in_line(line, old_path, new_path, ft)
+		local new_line = replace_path_in_line(line, old_path, new_path, ft, file_path)
 		if new_line ~= line then
 			changed_lines[i] = new_line
 			changes_made = true
@@ -237,13 +247,7 @@ local function update_file_on_disk(file_path, old_path, new_path, config)
 		end
 
 		-- Write back to file
-		local write_ok = pcall(function()
-			local f = io.open(file_path, "w")
-			if f then
-				f:write(table.concat(lines, "\n"))
-				f:close()
-			end
-		end)
+		local write_ok = pcall(vim.fn.writefile, lines, file_path)
 
 		if write_ok then
 			return vim.tbl_count(changed_lines)

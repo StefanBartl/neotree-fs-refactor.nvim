@@ -14,8 +14,6 @@ neotree-fs-refactor.nvim/
 │           ├── scanner.lua          # File reference scanner
 │           ├── path.lua             # Path manipulation utilities
 │           └── helpers.lua          # General helper functions
-├── plugin/
-│   └── neotree-fs-refactor.lua      # Auto-load plugin file
 ├── doc/
 │   └── neotree-fs-refactor.txt      # Vim help documentation
 ├── docs/

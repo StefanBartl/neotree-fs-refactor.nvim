@@ -42,22 +42,3 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: latest
           args: --check lua/
-
-  benchmark:
-    name: Performance Benchmark
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Install Neovim
-        uses: rhysd/action-setup-vim@v1
-        with:
-          neovim: true
-          version: stable
-
-      - name: Run benchmark
-        run: |
-          chmod +x tests/run_tests.sh
-          tests/run_tests.sh benchmark

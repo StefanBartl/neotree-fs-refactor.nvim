@@ -1,32 +1,51 @@
-# neotree-fs-refactor.nvim
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                      neotree-fs-refactor.nvim                            │
+└──────────────────────────────────────────────────────────────────────────┘
+```
 
-Automatic Lua `require()` refactoring for Neo-tree file operations.
+![Neovim](https://img.shields.io/badge/Neovim-0.10%2B-brightgreen?logo=neovim&logoColor=white)
+![Lua](https://img.shields.io/badge/Lua-5.1%2FLuaJIT-blue?logo=lua)
+![Status](https://img.shields.io/badge/status-alpha-orange)
 
-## ✨ Features
+> **Pairs well with [filetree.nvim](https://github.com/StefanBartl/filetree.nvim)** — filetree.nvim covers the general file-tree UX (picker, marks, batch rename, and more) across any tree plugin; this plugin adds the one thing it doesn't do: keeping `require()`/`import` statements correct when you rename or move a file.
 
-- 🔄 **Automatic Require Updates**: Automatically updates `require()` statements when files/directories are renamed in Neo-tree
-- 🚀 **Smart Caching**: Persistent cache system for fast lookups across Neovim sessions
-- 🔍 **Interactive Picker**: Review and select which requires to update via Telescope/FZF-Lua
-- ⚡ **Async Scanning**: Non-blocking directory scanning using libuv
-- 🌳 **Hierarchical Cache**: Parent directory caches automatically apply to subdirectories
-- 🧹 **Auto Cleanup**: Automatic removal of stale cache files
-- 🎯 **Pattern Matching**: Supports multiple require() syntax styles
+Automatic `require()`/`import` reference updates for Neo-tree file operations.
+Rename or move a file/directory in Neo-tree, and every reference to it
+elsewhere in your project — plus any open buffer — gets rewritten to match.
 
-## 📦 Installation
+## Features
+
+- **Automatic on rename/move**: subscribes to Neo-tree's own events, nothing
+  to wire up in your Neo-tree config.
+- **Lua, Python, TypeScript, JavaScript**: `require()`, `from`/`import`, and
+  relative TS/JS imports (computed correctly per referencing file, not a
+  single global guess).
+- **Directory renames cascade**: renaming `testfs/rem` → `testfs/remolus`
+  also updates `require("testfs.rem.da")` → `require("testfs.remolus.da")`
+  (Lua only for now — see [Known limitations](#known-limitations)).
+- **No hard external dependency**: uses ripgrep when it's on `$PATH` for a
+  fast project scan, and falls back to a pure-Lua directory walk otherwise.
+- **Delete warnings**: notifies you when a deleted file still has references
+  elsewhere, instead of silently leaving them broken.
+
+## Requirements
+
+- Neovim >= 0.10 (uses `vim.system()`)
+- [neo-tree.nvim](https://github.com/nvim-neo-tree/neo-tree.nvim)
+- ripgrep (optional — a pure-Lua fallback is used automatically without it)
+
+## Installation
 
 ### lazy.nvim
 
 ```lua
 {
   "StefanBartl/neotree-fs-refactor.nvim",
-  dependencies = {
-    "nvim-neo-tree/neo-tree.nvim",
-    "nvim-telescope/telescope.nvim", -- or "ibhagwan/fzf-lua"
-  },
+  dependencies = { "nvim-neo-tree/neo-tree.nvim" },
+  event = "VeryLazy",
   config = function()
-    require("neotree-fs-refactor").setup({
-      -- Configuration (see below)
-    })
+    require("neotree-fs-refactor").setup()
   end,
 }
 ```
@@ -36,270 +55,98 @@ Automatic Lua `require()` refactoring for Neo-tree file operations.
 ```lua
 use {
   "StefanBartl/neotree-fs-refactor.nvim",
-  requires = {
-    "nvim-neo-tree/neo-tree.nvim",
-    "nvim-telescope/telescope.nvim",
-  },
+  requires = { "nvim-neo-tree/neo-tree.nvim" },
+  event = "VeryLazy",
   config = function()
     require("neotree-fs-refactor").setup()
   end,
 }
 ```
 
-## ⚙️ Configuration
+## Configuration
 
-### Default Configuration
+`setup({})` accepts a `Neotree.FSRefactor.Config` table (see
+[`@types.lua`](lua/neotree-fs-refactor/@types.lua)). Every field is optional;
+shown here with its default:
 
 ```lua
 require("neotree-fs-refactor").setup({
-  -- Cache System
-  cache = {
-    enabled = true,                    -- Enable cache system
-    method = "optimized",              -- "async_lua" | "optimized" | "native_c" (future)
-    path = vim.fn.stdpath("cache") .. "/neotree-fs-refactor",
-    auto_update_on_cwd_change = false, -- Auto-scan on :cd
-    cleanup_after_days = 7,            -- Delete caches older than N days
-    incremental_updates = true,        -- Update cache on BufWritePost
+  enabled = true,
+  auto_save = false,           -- save buffers after rewriting a reference in them
+  notify_on_refactor = true,   -- show a summary notification per rename
+  ignore_patterns = {
+    "node_modules/**", ".git/**", "dist/**", "build/**", "*.min.js",
   },
-
-  -- Refactoring Behavior
-  refactor = {
-    confirm_before_write = true,       -- Ask before applying changes
-    dry_run = false,                   -- Only show what would change
-    show_picker = true,                -- Show interactive picker
-    auto_select_all = false,           -- Pre-select all changes
-    fallback_to_ripgrep = true,        -- Use ripgrep if no cache
+  file_types = {                -- only filetypes with a pattern replacer
+    lua = true,
+    typescript = true,
+    javascript = true,
+    typescriptreact = true,
+    javascriptreact = true,
+    python = true,
   },
-
-  -- UI
-  ui = {
-    picker = "telescope",              -- "telescope" | "fzf-lua"
-    progress_notifications = true,     -- Show progress messages
-    log_level = "info",                -- "debug" | "info" | "warn" | "error"
-  },
-
-  -- Performance
-  performance = {
-    max_files_per_scan = 10000,        -- Safety limit
-    debounce_ms = 500,                 -- Debounce for file watching
-    parallel_workers = 4,              -- Async workers (unused currently)
-  },
+  max_file_size = 1024 * 1024, -- skip files larger than this (bytes)
+  debounce_ms = 100,            -- debounce rapid rename/move/delete events
 })
 ```
 
-## 🔗 Neo-tree Integration
+## Usage
 
-Add the following to your Neo-tree configuration:
+Rename or move a file/directory in Neo-tree — that's it. The plugin:
 
-```lua
-require("neo-tree").setup({
-  event_handlers = {
-    {
-      event = "file_renamed",
-      handler = function(args)
-        require("neotree-fs-refactor.neotree_integration").on_rename(
-          args.source,
-          args.destination
-        )
-      end,
-    },
-    {
-      event = "file_moved",
-      handler = function(args)
-        require("neotree-fs-refactor.neotree_integration").on_move(
-          args.source,
-          args.destination
-        )
-      end,
-    },
-  },
-})
-```
+1. Updates any open buffer referencing the old path.
+2. Scans the project (ripgrep if available, otherwise a plain directory
+   walk) for files referencing the old path.
+3. Rewrites matching `require()`/`import` statements in those files.
 
-Or use the helper function:
-
-```lua
-local refactor_config = require("neotree-fs-refactor").get_neotree_config()
-
-require("neo-tree").setup({
-  event_handlers = vim.tbl_extend(
-    "force",
-    refactor_config.event_handlers,
-    -- your other handlers
-    {}
-  ),
-})
-```
-
-## 🚀 Usage
-
-### Automatic (with Neo-tree)
-
-1. Rename a file or directory in Neo-tree
-2. The plugin automatically:
-   - Finds all `require()` statements referencing the old path
-   - Shows an interactive picker (if enabled)
-   - Updates the files
-
-### Manual Commands
-
-```vim
-:RefactorRescan          " Manually rescan current directory
-:RefactorCacheStats      " Show cache statistics
-```
+Deleting a file instead prints a warning listing any file that still
+references it, so you know what to go fix.
 
 ### Programmatic API
 
 ```lua
--- Manual refactor
+-- Manually trigger the same reference update Neo-tree triggers automatically
+-- (useful for scripting, or wiring up a different file-tree plugin's rename event)
 require("neotree-fs-refactor").refactor(old_path, new_path)
 
--- Rescan directory
-require("neotree-fs-refactor").rescan()
-
--- Check cache
-if require("neotree-fs-refactor").has_cache() then
-  local stats = require("neotree-fs-refactor").get_cache_stats()
-  print(vim.inspect(stats))
-end
+-- Same checks as :checkhealth neotree-fs-refactor
+require("neotree-fs-refactor").check()
 ```
 
-## 📋 Workflow Example
+## Known limitations
 
-### Before Rename
+- Only `require()`/`import` statements are rewritten — a later reference to
+  the same module via a bound local name (e.g. Python's
+  `pkg.util.shared.greet()` after `import pkg.util.shared`) is not.
+- Directory-rename submodule cascading (see Features above) currently only
+  applies to Lua.
+- No AST/treesitter parsing — matching is pattern-based, so requires/imports
+  split across multiple lines or built from string concatenation aren't
+  recognized.
 
-```
-lua/
-  testfs/
-    rem/
-      da.lua
-    init.lua    -- require("testfs.rem.da")
-```
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's planned to address these.
 
-### Rename Directory: `rem` → `remolus`
-
-### Picker Shows
-
-```
-init.lua:3 | testfs.rem.da → testfs.remolus.da
-```
-
-- Press `<Tab>` to toggle selection
-- Press `<S-A>` to select all
-- Press `<CR>` to confirm
-
-### After Rename
-
-```lua
--- init.lua
-local remda = require("testfs.remolus.da")  -- ✓ Updated!
-```
-
-## 🎯 Supported Require Patterns
-
-```lua
-require("module.path")
-require "module.path"
-require('module.path')
-require 'module.path'
-```
-
-## 🚀 Performance
-
-### Scanner Methods
-
-The plugin offers two scanning methods:
-
-1. **`async_lua`** (Default fallback)
-   - Pure Lua implementation
-   - Cross-platform
-   - Good for small to medium projects
-
-2. **`optimized`** (Recommended - Default)
-   - Batched file I/O
-   - Compiled regex patterns
-   - String operation optimizations
-   - **2-3x faster than standard scanner**
-   - Suitable for large projects
-
-### Benchmark Results
-
-Tested on 500 Lua files with 20 requires each:
-
-| Method     | Mean Time | Speedup |
-|------------|-----------|---------|
-| async_lua  | 2.4s      | 1.0x    |
-| optimized  | 0.9s      | 2.7x    |
-
-Run your own benchmarks:
-
-```lua
-require("tests.benchmark").quick()  -- Quick test
-require("tests.benchmark").full()   -- Comprehensive test
-```
-
-## 🧪 Testing
-
-### Run Tests
+## Testing
 
 ```bash
-# All tests
-./tests/run_tests.sh
-
-# With benchmarks
-./tests/run_tests.sh benchmark
+tests/run_tests.sh
 ```
 
-### Test Coverage
+Requires [plenary.nvim](https://github.com/nvim-lua/plenary.nvim) (installed
+automatically by the script if missing). Covers path utilities and an
+end-to-end integration suite (Lua/Python/TS/JS rename scenarios, including a
+negative control for similarly-named-but-unrelated modules).
 
-- ✅ Unit tests (path utils, require finder, cache)
-- ✅ Integration tests (full refactoring workflow)
-- ✅ Performance benchmarks
-- ✅ CI/CD pipeline (GitHub Actions)
-
-## 🐛 Troubleshooting
-
-### Cache Not Found
-
-If refactoring is slow or falls back to ripgrep:
+## Health check
 
 ```vim
-:RefactorRescan
+:checkhealth neotree-fs-refactor
 ```
 
-### Check Cache Status
+## Documentation
 
-```vim
-:RefactorCacheStats
-```
-
-### Enable Debug Logging
-
-```lua
-require("neotree-fs-refactor").setup({
-  ui = {
-    log_level = "debug",
-  },
-})
-```
-
-## 🔮 Planned Features
-
-- [ ] Native C scanner for extreme performance
-- [ ] Undo/Redo support
-- [ ] Multi-root workspace support
-- [ ] Custom require pattern configuration
-- [ ] Git integration (detect renamed files)
-- [ ] LSP integration (rename via LSP)
-
-## 📝 License
-
-MIT License - see [LICENSE](LICENSE)
-
-## 🙏 Credits
-
-Inspired by the need for better refactoring tools in Neovim.
-
----
-
-**Note**: This plugin is in active development. Please report issues on GitHub!
+- [`:help neotree-fs-refactor`](doc/neotree-fs-refactor.txt)
+- [`docs/BINDINGS.md`](docs/BINDINGS.md) — keymaps/commands/events (there are
+  none to bind; this plugin is purely event-driven)
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — planned features and known gaps
+- [`docs/PROJECT-STRUCTURE.md`](docs/PROJECT-STRUCTURE.md) — module layout and data flow

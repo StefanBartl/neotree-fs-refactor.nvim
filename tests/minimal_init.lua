@@ -15,22 +15,8 @@ vim.opt.backup = false
 -- Initialize plugin with test config
 ---@diagnostic disable-next-line
 require("neotree-fs-refactor").setup({
-  cache = {
-    enabled = true,
-    method = "async_lua",
-    path = "/tmp/test_refactor_cache",
-    cleanup_after_days = 7,
-    incremental_updates = false,
-  },
-  refactor = {
-    confirm_before_write = false,
-    dry_run = false,
-    show_picker = false,
-  },
-  ui = {
-    log_level = "error",
-    progress_notifications = false,
-  },
+  notify_on_refactor = false,
+  debounce_ms = 0,
 })
 
 print("Test environment initialized")

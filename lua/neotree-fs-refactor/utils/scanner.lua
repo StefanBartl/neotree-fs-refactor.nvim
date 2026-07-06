@@ -1,99 +1,160 @@
 ---@module 'neotree-fs-refactor.utils.scanner'
----@brief Bridge module for backwards compatibility
+---@brief Synchronous project scan for files referencing a renamed path
 ---@description
---- This module provides backwards compatibility by bridging to the new
---- cache-based architecture. Use the new cache system directly for better performance.
+--- Finds files that plausibly reference a given path, restricted to the
+--- renamed file's own language family (lua ← lua, .py ← .py, ts/js ← any of
+--- ts/tsx/js/jsx). Uses ripgrep when available; falls back to a pure-Lua
+--- recursive directory walk otherwise, so the plugin has no hard external
+--- dependency.
 
 local M = {}
 
 local logger = require("neotree-fs-refactor.utils.logger")
 local path_util = require("neotree-fs-refactor.utils.path")
 
---- Find files with references to a given path (legacy API)
----@param cwd string Current working directory
----@param target_path string Path to search for
----@param config table Configuration
----@return string[] List of files containing references
----@diagnostic disable-next-line: unused-local
-function M.find_files_with_references(cwd, target_path, config)
-  logger.warn("Using legacy scanner.find_files_with_references - consider using cache system")
+--- Default directory names to always skip during a scan
+---@type table<string, boolean>
+local SKIP_DIRS = {
+  [".git"] = true,
+  node_modules = true,
+  dist = true,
+  build = true,
+}
 
-  -- Convert path to module
-  local target_module = path_util.file_to_module(target_path)
+--- Pick the search needle + extension whitelist for a rename, based on the
+--- renamed file's own filetype.
+---@param target_path string
+---@return string? needle, string[]? extensions
+local function scan_spec(target_path)
+  local ft = path_util.get_filetype_from_extension(target_path)
 
-  if not target_module then
-    logger.warn("Could not convert path to module: " .. target_path)
+  if ft == "lua" then
+    local m = path_util.file_to_module(target_path)
+    return m, m and { "lua" } or nil
+  elseif ft == "python" then
+    local m = path_util.path_to_python_module(target_path)
+    return m, m and { "py" } or nil
+  elseif ft:match("^typescript") or ft:match("^javascript") then
+    local base = path_util.filename(target_path):gsub("%.[tj]sx?$", "")
+    return base, { "ts", "tsx", "js", "jsx" }
+  elseif ft == "" then
+    -- Likely a directory rename (no extension to detect a language from) —
+    -- by the time this runs, target_path itself has usually already been
+    -- moved away on disk, so its existence can't be checked here.
+    -- file_to_module() dot-joins the *entire* path as a last resort when it
+    -- finds no "lua/" marker, so it would misfire as a bogus "match" for any
+    -- directory (e.g. a renamed Python package) if called unconditionally —
+    -- only treat this as Lua when the path is actually under a lua/ tree.
+    local unix = target_path:gsub("\\", "/")
+    if unix:match("/lua/") or unix:match("^lua/") then
+      local m = path_util.file_to_module(target_path)
+      return m, m and { "lua" } or nil
+    end
+  end
+
+  return nil, nil
+end
+
+--- Scan via ripgrep (fixed-string, extension-filtered)
+---@param root string
+---@param needle string
+---@param exts string[]
+---@return string[]
+local function scan_with_rg(root, needle, exts)
+  local cmd = { "rg", "--files-with-matches", "--fixed-strings", "--color=never" }
+  for _, ext in ipairs(exts) do
+    cmd[#cmd + 1] = "-g"
+    cmd[#cmd + 1] = "*." .. ext
+  end
+  for dir in pairs(SKIP_DIRS) do
+    cmd[#cmd + 1] = "-g"
+    cmd[#cmd + 1] = "!" .. dir .. "/*"
+  end
+  cmd[#cmd + 1] = "--"
+  cmd[#cmd + 1] = needle
+  cmd[#cmd + 1] = root
+
+  -- Argv form (no shell in between): nothing to quote/escape, and no
+  -- dependency on &shell being cmd.exe-compatible.
+  local result = vim.system(cmd, { text = true }):wait()
+  if result.code > 1 then -- rg: 0 = matches, 1 = no matches, >1 = error
+    logger.warn("ripgrep exited with code " .. tostring(result.code))
     return {}
   end
 
-  -- Use cache system to find references
-  local cache = require("neotree-fs-refactor.cache")
-  local current_cache = cache.get_cache(cwd)
-
-  if not current_cache then
-    -- No cache available, trigger scan
-    logger.info("No cache found, scanning directory...")
-    current_cache = cache.create_cache(cwd)
-
-    -- Use optimized scanner
-    local scanner = require("neotree-fs-refactor.cache.scanner_optimized")
-    scanner.scan_directory_optimized(cwd, current_cache, function()
-      logger.debug("Background scan complete")
-    end)
-
-    -- Return empty for now (async scan in progress)
-    return {}
-  end
-
-  -- Find files that reference this module
-  local results = cache.find_requires(target_module)
-
-  -- Convert to simple file list
   local files = {}
-  for file, _ in pairs(results) do
-    files[#files + 1] = file
+  for line in (result.stdout or ""):gmatch("[^\r\n]+") do
+    files[#files + 1] = path_util.normalize(line)
   end
-
-  logger.debug(string.format("Found %d file(s) referencing %s", #files, target_module))
-
   return files
 end
 
---- Build search patterns (legacy API)
----@param target_path string Target path
----@return table[] Search patterns
-function M.build_search_patterns(target_path)
-  local path_util_compat = require("neotree-fs-refactor.utils.path")
+--- Cross-platform fallback with no external dependency: walk the tree and
+--- grep each candidate-extension file for the needle as a plain substring.
+---@param root string
+---@param needle string
+---@param exts string[]
+---@param max_file_size number
+---@return string[]
+local function scan_with_lua_walk(root, needle, exts, max_file_size)
+  local ext_set = {}
+  for _, e in ipairs(exts) do ext_set[e] = true end
 
-  local normalized = path_util_compat.normalize(target_path)
-  local relative = path_util_compat.to_relative_import(normalized)
-  local module = path_util_compat.file_to_module(normalized)
+  local files = {}
 
-  local patterns = {}
-
-  -- Lua require patterns
-  if module then
-    patterns[#patterns + 1] = {
-      pattern = string.format('require[%s(]*["\']%s["\']', "%s", vim.pesc(module)),
-      type = "lua_require",
-    }
+  local function has_match(file_path)
+    local f = io.open(file_path, "r")
+    if not f then return false end
+    local content = f:read("*a")
+    f:close()
+    return content ~= nil and content:find(needle, 1, true) ~= nil
   end
 
-  -- Relative path patterns
-  if relative then
-    patterns[#patterns + 1] = {
-      pattern = vim.pesc(relative),
-      type = "relative_path",
-    }
+  local function walk(dir)
+    local ok, entries = pcall(vim.fn.readdir, dir)
+    if not ok or not entries then return end
+
+    for _, name in ipairs(entries) do
+      local full = path_util.join(dir, name)
+      if vim.fn.isdirectory(full) == 1 then
+        if not SKIP_DIRS[name] and not name:match("^%.") then
+          walk(full)
+        end
+      else
+        local ext = name:match("%.([%w]+)$")
+        if ext and ext_set[ext] then
+          local stat = vim.uv.fs_stat(full)
+          if stat and stat.size <= max_file_size and has_match(full) then
+            files[#files + 1] = full
+          end
+        end
+      end
+    end
   end
 
-  return patterns
+  walk(root)
+  return files
 end
 
---- Deprecated: Use cache system directly
----@deprecated
-function M.scan_directory()
-  error("scanner.scan_directory is deprecated. Use cache.scanner_optimized.scan_directory_optimized instead")
+--- Find files that plausibly reference `target_path`, scoped to its own
+--- language family and to `cwd`.
+---@param cwd string Directory to scan
+---@param target_path string Path being renamed/moved
+---@param config Neotree.FSRefactor.Config Plugin configuration
+---@return string[] List of candidate file paths
+function M.find_files_with_references(cwd, target_path, config)
+  local needle, exts = scan_spec(target_path)
+  if not needle or needle == "" or not exts then
+    logger.debug("No search pattern for " .. tostring(target_path) .. ", skipping scan")
+    return {}
+  end
+
+  if vim.fn.executable("rg") == 1 then
+    return scan_with_rg(cwd, needle, exts)
+  end
+
+  logger.debug("ripgrep not found, using pure-Lua directory walk")
+  return scan_with_lua_walk(cwd, needle, exts, config and config.max_file_size or (1024 * 1024))
 end
 
 return M

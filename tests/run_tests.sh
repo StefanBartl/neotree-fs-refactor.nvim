@@ -47,16 +47,4 @@ else
     echo -e "${RED}Tests failed with exit code $EXIT_CODE${NC}"
 fi
 
-# Run benchmark if requested
-if [ "$1" == "benchmark" ]; then
-    echo ""
-    echo -e "${GREEN}Running benchmarks...${NC}"
-    nvim --headless \
-        --noplugin \
-        -u NONE \
-        +"set rtp+=$PLUGIN_DIR" \
-        +"lua require('tests.benchmark').quick()" \
-        +qa
-fi
-
 exit $EXIT_CODE

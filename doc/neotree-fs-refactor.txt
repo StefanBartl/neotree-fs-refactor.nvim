@@ -1,0 +1,136 @@
+*neotree-fs-refactor.txt*   Automatic require()/import updates for Neo-tree renames
+
+Author:  Stefan Bartl
+Version: 0.1.0
+
+==============================================================================
+CONTENTS                                      *neotree-fs-refactor-contents*
+
+  1. Introduction ........................... |neotree-fs-refactor-intro|
+  2. Requirements ........................... |neotree-fs-refactor-requirements|
+  3. Quick start ............................ |neotree-fs-refactor-quickstart|
+  4. Configuration ........................... |neotree-fs-refactor-config|
+  5. Commands ................................ |neotree-fs-refactor-commands|
+  6. Public API ............................... |neotree-fs-refactor-api|
+  7. Health check ............................. |neotree-fs-refactor-health|
+  8. Known limitations ........................ |neotree-fs-refactor-limits|
+
+==============================================================================
+1. INTRODUCTION                                   *neotree-fs-refactor-intro*
+
+neotree-fs-refactor.nvim listens to Neo-tree's file rename/move events and
+rewrites `require()`/`import` references to the moved path across your open
+buffers and project files — for Lua, Python, TypeScript, and JavaScript.
+
+  Minimal setup: >lua
+    require("neotree-fs-refactor").setup()
+<
+Neo-tree wiring is automatic: `setup()` subscribes to Neo-tree's
+`file_renamed`/`file_moved`/`file_deleted` events itself. Nothing needs to be
+added to your Neo-tree config.
+
+==============================================================================
+2. REQUIREMENTS                                *neotree-fs-refactor-requirements*
+
+  • Neovim >= 0.10 (uses |vim.system()|)
+  • neo-tree.nvim
+  • ripgrep (optional) — used when present for a faster project scan; a
+    pure-Lua directory walk is used automatically when it's missing, so
+    there's no hard dependency on it.
+
+==============================================================================
+3. QUICK START                                *neotree-fs-refactor-quickstart*
+
+>lua
+  {
+    "StefanBartl/neotree-fs-refactor.nvim",
+    dependencies = { "nvim-neo-tree/neo-tree.nvim" },
+    event = "VeryLazy",
+    config = function()
+      require("neotree-fs-refactor").setup()
+    end,
+  }
+<
+Rename or move a file/directory inside Neo-tree — references to it elsewhere
+in the project (and in open buffers) are rewritten automatically.
+
+==============================================================================
+4. CONFIGURATION                                    *neotree-fs-refactor-config*
+
+`setup({})` accepts a |Neotree.FSRefactor.Config| table. All fields are
+optional and shown here with their defaults: >lua
+
+  require("neotree-fs-refactor").setup({
+    enabled = true,
+    auto_save = false,           -- save buffers after rewriting a reference
+    notify_on_refactor = true,   -- show a summary notification per rename
+    ignore_patterns = {
+      "node_modules/**", ".git/**", "dist/**", "build/**", "*.min.js",
+    },
+    file_types = {               -- only filetypes with a pattern replacer
+      lua = true,
+      typescript = true,
+      javascript = true,
+      typescriptreact = true,
+      javascriptreact = true,
+      python = true,
+    },
+    max_file_size = 1024 * 1024, -- skip files larger than this (bytes)
+    debounce_ms = 100,           -- debounce rapid rename/move/delete events
+  })
+<
+
+==============================================================================
+5. COMMANDS                                        *neotree-fs-refactor-commands*
+
+None. The plugin works entirely through Neo-tree's own rename/move/delete
+events — there's nothing to trigger manually in normal use. For scripted or
+non-Neo-tree triggers, see |neotree-fs-refactor-api|.
+
+==============================================================================
+6. PUBLIC API                                          *neotree-fs-refactor-api*
+
+>lua
+  require("neotree-fs-refactor").setup(opts)
+<
+  Configure and start listening to Neo-tree events. See
+  |neotree-fs-refactor-config|.
+
+>lua
+  require("neotree-fs-refactor").refactor(old_path, new_path)
+<
+  Manually trigger the same reference update Neo-tree triggers automatically,
+  for a rename/move that already happened on disk. Useful for scripting or
+  wiring up a different file-tree plugin's rename event.
+
+>lua
+  require("neotree-fs-refactor").check()
+<
+  Runs the same checks as |:checkhealth| neotree-fs-refactor.
+
+==============================================================================
+7. HEALTH CHECK                                      *neotree-fs-refactor-health*
+
+Run: >vim
+  :checkhealth neotree-fs-refactor
+<
+Reports whether neo-tree.nvim and plenary.nvim are installed, whether
+ripgrep is on `$PATH` (informational — a pure-Lua fallback is used either
+way), and the plugin's enabled/disabled state.
+
+==============================================================================
+8. KNOWN LIMITATIONS                                 *neotree-fs-refactor-limits*
+
+  • Only `require()`/`import` statements are rewritten — a later reference
+    to the same module via a bound local name (e.g. Python's
+    `pkg.util.shared.greet()` after `import pkg.util.shared`) is not.
+  • Directory renames cascade to nested Lua `require()` references
+    (`testfs.rem` → `testfs.remolus` also updates `testfs.rem.da`), but this
+    cascading currently only applies to Lua; a renamed Python package or
+    TS/JS folder only updates references to files renamed directly, not a
+    whole subtree in one pass.
+  • No AST/treesitter parsing — matching is pattern-based, so requires/imports
+    split across multiple lines or built from string concatenation aren't
+    recognized.
+
+vim:tw=78:ts=8:ft=help:norl:

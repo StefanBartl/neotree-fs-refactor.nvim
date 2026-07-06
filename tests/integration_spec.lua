@@ -1,192 +1,138 @@
 ---@diagnostic disable: undefined-global
 ---@module 'tests.integration_spec'
----@brief Integration tests for full refactoring workflow
+---@brief Integration tests for the full refactoring workflow
 ---@description
---- Tests the complete flow from file rename to require updates.
+--- Tests core.refactor.rename_references end to end: given a rename/move that
+--- already happened on disk, verifies references in other files and open
+--- buffers get updated. Covers Lua, Python, and TypeScript/JavaScript, since
+--- all three previously crashed or silently no-op'd (missing path-util
+--- functions, a cache-dependent scanner that returned nothing on a project's
+--- first scan, and a single global relative-import path that was only ever
+--- correct for one specific referencing file).
 
-describe("integration tests", function()
-	local test_project_dir = "/tmp/test_refactor_project"
-	local refactor
+local refactor = require("neotree-fs-refactor.core.refactor")
 
-	before_each(function()
-		-- Clean up
-		vim.fn.delete(test_project_dir, "rf")
-		vim.fn.mkdir(test_project_dir .. "/lua/testfs/rem", "p")
+---@type Neotree.FSRefactor.Config
+local test_config = {
+  enabled = true,
+  auto_save = false,
+  notify_on_refactor = false,
+  ignore_patterns = {},
+  file_types = {
+    lua = true,
+    typescript = true,
+    javascript = true,
+    typescriptreact = true,
+    javascriptreact = true,
+    python = true,
+  },
+  max_file_size = 1024 * 1024,
+  debounce_ms = 0,
+}
 
-		-- Create test project structure
-		-- testfs/rem/da.lua
-		vim.fn.writefile({
-			"local M = {}",
-			"function M.test() return 'original' end",
-			"return M",
-		}, test_project_dir .. "/lua/testfs/rem/da.lua")
+-- A bare "/tmp/..." literal is ambiguous on native Windows Neovim (a leading
+-- "/" resolves drive-relative to whatever drive is current, not to a real
+-- /tmp), so resolve a real OS temp dir explicitly.
+local test_dir = (vim.fn.has("win32") == 1 and vim.env.TEMP or "/tmp") .. "/test_neotree_fs_refactor_integration"
 
-		-- testfs/init.lua (uses rem.da)
-		vim.fn.writefile({
-			'local remda = require("testfs.rem.da")',
-			"",
-			"local function main()",
-			"  print(remda.test())",
-			"end",
-			"",
-			"return { main = main }",
-		}, test_project_dir .. "/lua/testfs/init.lua")
+local function write(path, lines)
+  vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
+  vim.fn.writefile(lines, path)
+end
 
-		-- Initialize plugin
-		---@diagnostic disable-next-line
-		require("neotree-fs-refactor").setup({
-			cache = {
-				enabled = true,
-				method = "async_lua",
-				path = "/tmp/test_integration_cache",
-			},
-			refactor = {
-				show_picker = false,
-				dry_run = false,
-			},
-			ui = {
-				log_level = "error",
-			},
-		})
+local function read(path)
+  local ok, lines = pcall(vim.fn.readfile, path)
+  return ok and table.concat(lines, "\n") or nil
+end
 
-		refactor = require("neotree-fs-refactor.refactor")
-	end)
+describe("integration: core.refactor.rename_references", function()
+  local original_cwd
 
-	after_each(function()
-		vim.fn.delete(test_project_dir, "rf")
-		vim.fn.delete("/tmp/test_integration_cache", "rf")
-	end)
+  before_each(function()
+    original_cwd = vim.fn.getcwd()
+    vim.fn.delete(test_dir, "rf")
+    vim.fn.mkdir(test_dir, "p")
+    -- The scanner searches vim.fn.getcwd(): scope it to the isolated fixture
+    -- dir so it can't find (and rewrite!) unrelated matches in the repo
+    -- itself, e.g. these very test files' own require()/import string literals.
+    vim.fn.chdir(test_dir)
+  end)
 
-	it("should update requires when directory is renamed", function()
-		-- Build cache
-		local cache = require("neotree-fs-refactor.cache")
-		local test_cache = cache.create_cache(test_project_dir)
+  after_each(function()
+    vim.fn.chdir(original_cwd)
+    vim.fn.delete(test_dir, "rf")
+  end)
 
-		-- Manually populate cache (simulating scan)
-		test_cache.entries[test_project_dir .. "/lua/testfs/init.lua"] = {
-			{ line = 1, require_path = "testfs.rem.da" },
-		}
-		cache._current_cache = test_cache
-		cache.save_current_cache()
+  it("updates require() references across a Lua directory rename", function()
+    write(test_dir .. "/lua/testfs/rem/da.lua", { "return { greet = function() return 'hi' end }" })
+    write(test_dir .. "/lua/testfs/init.lua", { 'local da = require("testfs.rem.da")', "return da" })
+    write(test_dir .. "/lua/testfs/other.lua", { 'local da = require("testfs.rem.da")', "return da" })
 
-		-- Simulate rename: rem → remolus
-		local old_dir = test_project_dir .. "/lua/testfs/rem"
-		local new_dir = test_project_dir .. "/lua/testfs/remolus"
+    local old_dir = test_dir .. "/lua/testfs/rem"
+    local new_dir = test_dir .. "/lua/testfs/remolus"
+    vim.fn.rename(old_dir, new_dir)
 
-		-- Actually rename the directory
-		vim.fn.rename(old_dir, new_dir)
+    local ok = refactor.rename_references(old_dir, new_dir, test_config)
+    assert.is_true(ok)
 
-		-- Trigger refactor
-		refactor.handle_rename(old_dir, new_dir)
+    assert.is_true(read(test_dir .. "/lua/testfs/init.lua"):find('require("testfs.remolus.da")', 1, true) ~= nil)
+    assert.is_true(read(test_dir .. "/lua/testfs/other.lua"):find('require("testfs.remolus.da")', 1, true) ~= nil)
+  end)
 
-		-- Give it time to complete (async operations)
-		vim.wait(2000, function()
-			return false
-		end)
+  it("updates require() references across a single Lua file rename", function()
+    write(test_dir .. "/lua/testfs/rem/da.lua", { "return {}" })
+    write(test_dir .. "/lua/testfs/init.lua", { 'local da = require("testfs.rem.da")', "return da" })
 
-		-- Verify the require was updated
-		local updated_content = vim.fn.readfile(test_project_dir .. "/lua/testfs/init.lua")
-		local found_updated = false
+    local old_file = test_dir .. "/lua/testfs/rem/da.lua"
+    local new_file = test_dir .. "/lua/testfs/rem/db.lua"
+    vim.fn.rename(old_file, new_file)
 
-		for _, line in ipairs(updated_content) do
-			if line:match('require%("testfs%.remolus%.da"%)') then
-				found_updated = true
-				break
-			end
-		end
+    refactor.rename_references(old_file, new_file, test_config)
 
-		assert.is_true(found_updated, "Require statement should be updated to testfs.remolus.da")
-	end)
+    assert.is_true(read(test_dir .. "/lua/testfs/init.lua"):find('require("testfs.rem.db")', 1, true) ~= nil)
+  end)
 
-	it("should handle file rename", function()
-		-- Build cache
-		local cache = require("neotree-fs-refactor.cache")
-		local test_cache = cache.create_cache(test_project_dir)
+  it("updates from/import module references across a Python rename", function()
+    write(test_dir .. "/pkg/util/shared.py", { "def greet(): return 'hi'" })
+    write(test_dir .. "/pkg/a.py", { "from pkg.util.shared import greet", "greet()" })
 
-		test_cache.entries[test_project_dir .. "/lua/testfs/init.lua"] = {
-			{ line = 1, require_path = "testfs.rem.da" },
-		}
-		cache._current_cache = test_cache
-		cache.save_current_cache()
+    local old_file = test_dir .. "/pkg/util/shared.py"
+    local new_file = test_dir .. "/pkg/util/shared_utils.py"
+    vim.fn.rename(old_file, new_file)
 
-		-- Simulate rename: da.lua → db.lua
-		local old_file = test_project_dir .. "/lua/testfs/rem/da.lua"
-		local new_file = test_project_dir .. "/lua/testfs/rem/db.lua"
+    refactor.rename_references(old_file, new_file, test_config)
 
-		vim.fn.rename(old_file, new_file)
+    assert.is_true(read(test_dir .. "/pkg/a.py"):find("from pkg.util.shared_utils import greet", 1, true) ~= nil)
+  end)
 
-		-- Trigger refactor
-		refactor.handle_rename(old_file, new_file)
+  it("computes the relative import specifier per referencing file, not globally", function()
+    -- Regression test: TS/JS imports are relative to the importing file's own
+    -- directory, so two files at different depths need different rewritten
+    -- specifiers for the very same rename.
+    write(test_dir .. "/src/util/shared.ts", { "export function greet() { return 'hi' }" })
+    write(test_dir .. "/src/a.ts", { 'import { greet } from "./util/shared";' })
+    write(test_dir .. "/src/nested/b.ts", { 'import { greet } from "../util/shared";' })
 
-		vim.wait(2000, function()
-			return false
-		end)
+    local old_file = test_dir .. "/src/util/shared.ts"
+    local new_file = test_dir .. "/src/util/shared_utils.ts"
+    vim.fn.rename(old_file, new_file)
 
-		-- Verify
-		local updated_content = vim.fn.readfile(test_project_dir .. "/lua/testfs/init.lua")
-		local found_updated = false
+    refactor.rename_references(old_file, new_file, test_config)
 
-		for _, line in ipairs(updated_content) do
-			if line:match('require%("testfs%.rem%.db"%)') then
-				found_updated = true
-				break
-			end
-		end
+    assert.is_true(read(test_dir .. "/src/a.ts"):find('from "./util/shared_utils"', 1, true) ~= nil)
+    assert.is_true(read(test_dir .. "/src/nested/b.ts"):find('from "../util/shared_utils"', 1, true) ~= nil)
+  end)
 
-		assert.is_true(found_updated, "Require should be updated to testfs.rem.db")
-	end)
+  it("does not touch a similarly-named but unrelated module", function()
+    write(test_dir .. "/lua/testfs/rem/da.lua", { "return {}" })
+    write(test_dir .. "/lua/testfs/other.lua", { 'local x = require("testfs.rem.da_other")' })
 
-	it("should update multiple files with same require", function()
-		-- Create second file using rem.da
-		vim.fn.writefile({
-			'local shared = require("testfs.rem.da")',
-			"return shared",
-		}, test_project_dir .. "/lua/testfs/other.lua")
+    local old_file = test_dir .. "/lua/testfs/rem/da.lua"
+    local new_file = test_dir .. "/lua/testfs/rem/db.lua"
+    vim.fn.rename(old_file, new_file)
 
-		-- Build cache
-		local cache = require("neotree-fs-refactor.cache")
-		local test_cache = cache.create_cache(test_project_dir)
+    refactor.rename_references(old_file, new_file, test_config)
 
-		test_cache.entries[test_project_dir .. "/lua/testfs/init.lua"] = {
-			{ line = 1, require_path = "testfs.rem.da" },
-		}
-		test_cache.entries[test_project_dir .. "/lua/testfs/other.lua"] = {
-			{ line = 1, require_path = "testfs.rem.da" },
-		}
-		cache._current_cache = test_cache
-		cache.save_current_cache()
-
-		-- Rename directory
-		local old_dir = test_project_dir .. "/lua/testfs/rem"
-		local new_dir = test_project_dir .. "/lua/testfs/remolus"
-		vim.fn.rename(old_dir, new_dir)
-
-		refactor.handle_rename(old_dir, new_dir)
-		vim.wait(2000, function()
-			return false
-		end)
-
-		-- Verify both files were updated
-		local init_updated = false
-		local other_updated = false
-
-		local init_content = vim.fn.readfile(test_project_dir .. "/lua/testfs/init.lua")
-		for _, line in ipairs(init_content) do
-			if line:match("testfs%.remolus%.da") then
-				init_updated = true
-				break
-			end
-		end
-
-		local other_content = vim.fn.readfile(test_project_dir .. "/lua/testfs/other.lua")
-		for _, line in ipairs(other_content) do
-			if line:match("testfs%.remolus%.da") then
-				other_updated = true
-				break
-			end
-		end
-
-		assert.is_true(init_updated, "init.lua should be updated")
-		assert.is_true(other_updated, "other.lua should be updated")
-	end)
+    assert.is_true(read(test_dir .. "/lua/testfs/other.lua"):find('require("testfs.rem.da_other")', 1, true) ~= nil)
+  end)
 end)
